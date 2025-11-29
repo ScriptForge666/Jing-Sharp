@@ -1,0 +1,119 @@
+name: Build & Release
+
+# 只在打 tag（v*）时触发。若想保留手动触发，可另建一个 workflow。
+on:
+  push:
+    tags:
+      - 'v*'   # 例如 v0.9.0、v1.2.3
+
+jobs:
+  build:
+    # 为每个平台并行构建
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    # ----- 环境变量 -------------------------------------------------
+    env:
+      # 把 tag 前缀“v”去掉，得到纯数字版本号，如 0.9.0
+      VERSION: ${{ github.ref_name }}
+      # 临时目录，防止与工作区冲突
+      TMP_DIR: ${{ runner.temp }}
+
+    steps:
+      # -----------------------------------------------------------------
+      # 1️⃣ Checkout 源码
+      # -----------------------------------------------------------------
+      - uses: actions/checkout@v3
+
+      # -----------------------------------------------------------------
+      # 2️⃣ 安装 CMake（跨平台统一）
+      # -----------------------------------------------------------------
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v1
+
+      # -----------------------------------------------------------------
+      # 3️⃣ （可选）安装编译器工具链
+      #    Ubuntu/macOS 默认已有 gcc/clang，Windows 用 VS Build Tools。
+      # -----------------------------------------------------------------
+      - name: Install Build Tools (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # 已经随 windows-latest 装好 Visual Studio Build Tools
+          echo "VS Build Tools 已经预装，无需额外操作"
+        shell: pwsh
+
+      # -----------------------------------------------------------------
+      # 4️⃣ CMake 配置 & 编译（Release）
+      # -----------------------------------------------------------------
+      - name: Build
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake --build . --config Release
+        shell: bash
+
+      # -----------------------------------------------------------------
+      # 5️⃣ 统一化版本号（去掉前缀 ‘v’），并导出为 output 供后续步骤使用
+      # -----------------------------------------------------------------
+      - name: Normalize version string
+        id: version
+        run: |
+          # 去掉开头的 "v"
+          echo "VERSION=${VERSION#v}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      # -----------------------------------------------------------------
+      # 6️⃣ 打包（根据 OS 生成 zip / tar.gz，放入 $TMP_DIR）
+      # -----------------------------------------------------------------
+      - name: Package
+        id: pack
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          OS=${{ runner.os }}
+          ARCH=$(uname -m)
+
+          # Windows 里使用 PowerShell 的 Compress-Archive
+          if [[ "$OS" == "Windows" ]]; then
+            EXE=peculiarc.exe
+            ARCH=x64                      # windows-latest 默认 64‑bit
+            OUT_NAME=peculiarc-windows-${ARCH}-${VERSION}.zip
+            pwsh -Command "Compress-Archive -Path build\$EXE -DestinationPath $TMP_DIR\$OUT_NAME"
+          else
+            # Linux / macOS 使用 tar.gz
+            BIN=peculiarc
+            if [[ "$OS" == "Linux" ]]; then
+              OUT_NAME=peculiarc-linux-${ARCH}-${VERSION}.tar.gz
+            else
+              # macOS（GitHub runners 为 Intel + Apple‑Silicon; 这里统一使用 arm64 作示例）
+              OUT_NAME=peculiarc-macos-arm64-${VERSION}.tar.gz
+            fi
+            tar -czvf $TMP_DIR/$OUT_NAME -C build $BIN
+          fi
+
+          # 生成 SHA256 校验文件
+          cd $TMP_DIR
+          sha256sum $OUT_NAME > ${OUT_NAME}.sha256
+
+          # 把生成的文件路径写入 step 输出，后面的上传步骤直接引用
+          echo "PACKAGE_PATH=$TMP_DIR/$OUT_NAME" >> $GITHUB_OUTPUT
+          echo "CHECKSUM_PATH=$TMP_DIR/${OUT_NAME}.sha256" >> $GITHUB_OUTPUT
+        shell: bash
+
+      # -----------------------------------------------------------------
+      # 7️⃣ 上传至 GitHub Release（使用 softprops/action-gh-release）
+      # -----------------------------------------------------------------
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          # 只在 tag 推送时自动创建（或更新） Release
+          tag_name: ${{ github.ref_name }}
+          name: "Release ${{ steps.version.outputs.VERSION }}"
+          generate_release_notes: true
+          files: |
+            ${{ steps.pack.outputs.PACKAGE_PATH }}
+            ${{ steps.pack.outputs.CHECKSUM_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
