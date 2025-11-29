@@ -19,7 +19,7 @@ jobs:
       # 把 tag 前缀“v”去掉，得到纯数字版本号，如 0.9.0
       VERSION: ${{ github.ref_name }}
       # 临时目录，防止与工作区冲突
-      TMP_DIR: ${{ runner.temp }}
+      TMP_DIR: ${{ github.runner.temp }}
 
     steps:
       # -----------------------------------------------------------------
