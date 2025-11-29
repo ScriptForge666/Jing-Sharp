@@ -49,23 +49,24 @@ jobs:
       # ----------------------------------------------------
       # 3️⃣ CMake 配置（每个平台单独写）             ← 关键改动
       # ----------------------------------------------------
-      - name: Configure CMake
-        # 对 Windows 使用 PowerShell（默认），对 Linux/macOS 使用 Bash
+      # ----------- Linux / macOS (bash) ------------
+      - name: Configure CMake (Unix)
+        if: runner.os != 'Windows'          # 只在非 Windows 上运行
         run: |
-          # ------------------- Linux / macOS -------------------
-          if [[ "${{ runner.os }}" != "Windows" ]]; then
-            cmake -S . -B build \
-                  -G "${{ matrix.generator }}" \
-                  -DCMAKE_BUILD_TYPE=Release
-            exit 0
-          fi
+          cmake -S . -B build \
+          -G "${{ matrix.generator }}" \
+          -DCMAKE_BUILD_TYPE=Release
+        shell: bash
 
-          # ------------------- Windows ------------------------
-          # PowerShell 不认识 \ 行续符 → 用 ` (反引号) 或写成一行
+        # ----------- Windows (PowerShell) ----------
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: |
           cmake -S . -B build `
-                -G "${{ matrix.generator }}" `
-                -A x64
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+          -G "${{ matrix.generator }}" `
+          -A x64
+        shell: pwsh
+
 
       # ----------------------------------------------------
       # 4️⃣ 编译
