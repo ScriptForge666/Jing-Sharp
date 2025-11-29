@@ -1,6 +1,6 @@
 name: Build & Release
 
-# 只在打 tag（v*）时触发。若想保留手动触发，可另建一个 workflow。
+# 只在打 tag（v*）时触发
 on:
   push:
     tags:
@@ -8,106 +8,78 @@ on:
 
 jobs:
   build:
-    # 为每个平台并行构建
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-      fail-fast: false  # 关键：一个平台失败，其他继续执行
+      fail-fast: false
 
-    # ----- 环境变量 -------------------------------------------------
     env:
-      # 把 tag 前缀“v”去掉，得到纯数字版本号，如 0.9.0
       VERSION: ${{ github.ref_name }}
-      # 临时目录，防止与工作区冲突（修复：补全 github. 前缀）
       TMP_DIR: ${{ github.runner.temp }}
 
     steps:
-      # -----------------------------------------------------------------
-      # 1️⃣ Checkout 源码
-      # -----------------------------------------------------------------
       - uses: actions/checkout@v3
 
-      # -----------------------------------------------------------------
-      # 2️⃣ 安装 CMake（跨平台统一）
-      # -----------------------------------------------------------------
       - name: Set up CMake
         uses: jwlawson/actions-setup-cmake@v1
 
-      # -----------------------------------------------------------------
-      # 3️⃣ （可选）安装编译器工具链
-      #    Ubuntu/macOS 默认已有 gcc/clang，Windows 用 VS Build Tools。
-      # -----------------------------------------------------------------
       - name: Install Build Tools (Windows)
-        if: github.runner.os == 'Windows'  # 修复：补全 github. 前缀
+        if: github.runner.os == 'Windows'
         run: |
-          # 已经随 windows-latest 装好 Visual Studio Build Tools
           echo "VS Build Tools 已经预装，无需额外操作"
         shell: pwsh
 
-      # -----------------------------------------------------------------
-      # 4️⃣ CMake 配置 & 编译（Release）
-      # -----------------------------------------------------------------
       - name: Build
         run: |
-          mkdir -p build  # 确保 build 目录存在
+          mkdir -p build
           cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release
-          # 兼容 Windows/macOS/Linux 的编译命令（--config Release 对 Makefile 无效但不报错）
-          cmake --build . --config Release --parallel 2  # 并行编译（加快速度）
+          cmake --build . --config Release --parallel 2
         shell: bash
 
-      # -----------------------------------------------------------------
-      # 5️⃣ 统一化版本号（去掉前缀 ‘v’），并导出为 output 供后续步骤使用
-      # -----------------------------------------------------------------
       - name: Normalize version string
         id: version
         run: |
-          # 去掉开头的 "v"
           echo "VERSION=${VERSION#v}" >> $GITHUB_OUTPUT
         shell: bash
 
-      # -----------------------------------------------------------------
-      # 6️⃣ 打包（修复路径+权限+调试日志）
-      # -----------------------------------------------------------------
       - name: Package
         id: pack
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
-          OS=${{ github.runner.os }}  # 修复：补全 github. 前缀
-          ARCH=$(uname -m 2>/dev/null || echo "x64")  # 兼容 Windows 的 uname 命令
+          OS=${{ github.runner.os }}
+          ARCH=$(uname -m 2>/dev/null || echo "x64")
 
-          # 核心：指定二进制文件输出目录（CMake Release 模式默认路径）
+          # 修复二进制文件路径：优先检查 build/src 目录（因 add_subdirectory(src)）
           if [[ "$OS" == "Windows" ]]; then
-            BIN_DIR="build/Release"
+            BIN_DIR="build/Release/src"  # Windows 下 src 子目录
             EXE=peculiarc.exe
             ARCH=x64
             OUT_NAME="peculiarc-windows-${ARCH}-${VERSION}.zip"
           else
-            BIN_DIR="build/Release"
+            BIN_DIR="build/src"  # Linux/macOS 下 src 子目录
             BIN=peculiarc
-            # 验证 Release 目录，不存在则 fallback 到 build 根目录
+            # 验证目录，不存在则 fallback
             if [[ ! -d "$BIN_DIR" ]]; then
               echo "⚠️  $BIN_DIR 不存在，尝试 fallback 到 build 目录"
               BIN_DIR="build"
             fi
-            # 确定系统架构和输出文件名
             if [[ "$OS" == "Linux" ]]; then
               OUT_NAME="peculiarc-linux-${ARCH}-${VERSION}.tar.gz"
-            else  # macOS
-              OUT_NAME="peculiarc-macos-${ARCH}-${VERSION}.tar.gz"  # 用实际架构（Intel=x86_64，Apple Silicon=arm64）
+            else
+              OUT_NAME="peculiarc-macos-${ARCH}-${VERSION}.tar.gz"
             fi
           fi
 
-          # 调试：输出关键路径信息
+          # 调试信息
           echo "🔍 系统：$OS，架构：$ARCH，版本：$VERSION"
           echo "🔍 二进制目录：$BIN_DIR"
           echo "🔍 临时目录：$TMP_DIR"
-          ls -l "$BIN_DIR"  # 列出二进制目录内容，方便调试
+          ls -l "$BIN_DIR"
 
           # 打包逻辑
           if [[ "$OS" == "Windows" ]]; then
-            # Windows：用 PowerShell 压缩，兼容路径格式
             pwsh -Command "
               if (Test-Path '$BIN_DIR\$EXE') {
                 Compress-Archive -Path '$BIN_DIR\$EXE' -DestinationPath '$TMP_DIR\$OUT_NAME' -Force
@@ -118,7 +90,6 @@ jobs:
               }
             "
           else
-            # Linux/macOS：用 tar 打包，先验证文件存在
             if [[ -f "$BIN_DIR/$BIN" ]]; then
               tar -czvf "$TMP_DIR/$OUT_NAME" -C "$BIN_DIR" "$BIN"
               echo "✅ Linux/macOS 打包成功：$TMP_DIR/$OUT_NAME"
@@ -131,20 +102,15 @@ jobs:
           # 生成 SHA256 校验文件
           cd "$TMP_DIR"
           if [[ "$OS" == "Windows" ]]; then
-            # Windows 用 PowerShell 生成 SHA256
             pwsh -Command "(Get-FileHash -Path '$OUT_NAME' -Algorithm SHA256).Hash | Out-File -FilePath '${OUT_NAME}.sha256' -Encoding ASCII"
           else
             sha256sum "$OUT_NAME" > "${OUT_NAME}.sha256"
           fi
 
-          # 输出文件路径给后续步骤
           echo "PACKAGE_PATH=$TMP_DIR/$OUT_NAME" >> $GITHUB_OUTPUT
           echo "CHECKSUM_PATH=$TMP_DIR/${OUT_NAME}.sha256" >> $GITHUB_OUTPUT
         shell: bash
 
-      # -----------------------------------------------------------------
-      # 7️⃣ 上传至 GitHub Release
-      # -----------------------------------------------------------------
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
@@ -156,5 +122,4 @@ jobs:
             ${{ steps.pack.outputs.CHECKSUM_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # 只有打包成功才执行上传（失败则跳过）
         if: success()
