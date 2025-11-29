@@ -9,17 +9,18 @@ on:
 jobs:
   build:
     # 运行平台
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{{ matrix.os }
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
       fail-fast: false  # 单个平台失败不影响其他平台
 
-    # 环境变量
+    # 环境变量（注意缩进：属于jobs.build 的子项）
     env:
-      VERSION: ${{ github.ref_name }}  # 从标签获取版本（如 v0.9.4）
-      TMP_DIR: ${{ runner runner.temp }}  # 修复：临时目录变量（移除多余符号，保持正确缩进）
+      VERSION: ${{ github.ref_name }}
+      TMP_DIR: ${{ github.runner.temp }}  # 正确的临时目录变量
 
+    # 步骤（所有步骤必须缩进在 jobs.build 下）
     steps:
       # 1. 检出代码
       - name: Checkout repository
@@ -31,7 +32,14 @@ jobs:
         with:
           cmake-version: '3.15'  # 匹配项目最低要求
 
-      # 3. 编译项目
+      # 3. Windows 额外安装工具（仅 Windows 执行）
+      - name: Install Build Tools (Windows)
+        if: github.runner.os == 'Windows'
+        run: |
+          echo "VS Build Tools 已经预装，无需额外操作"
+        shell: pwsh
+
+      # 4. 编译项目
       - name: Build with CMake
         run: |
           mkdir -p build
@@ -40,19 +48,19 @@ jobs:
           cmake --build . --config Release --parallel 2
         shell: bash
 
-      # 4. 处理版本号（去除前缀 'v'）
+      # 5. 处理版本号（去除前缀 'v'）
       - name: Normalize version
         id: version
         run: |
           echo "VERSION=${VERSION#v}" >> $GITHUB_OUTPUT
         shell: bash
 
-      # 5. 打包二进制文件
+      # 6. 打包二进制文件
       - name: Package binaries
         id: package
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
-          OS=${{ runner runner.os }}
+          OS=${{ github.runner.os }}  # 修正：正确引用系统变量
           ARCH=$(uname -m 2>/dev/null || echo "x64")
 
           # 确定二进制文件路径（根据 CMake 配置）
@@ -72,13 +80,13 @@ jobs:
 
           # 验证二进制文件存在
           if [[ ! -f "${BIN_DIR}/${BIN_NAME}" ]]; then
-            echo "❌ 找不到二进制文件: ${BIN BIN_DIR}/${BIN_NAME}"
+            echo "❌ 找不到二进制文件: ${BIN_DIR}/${BIN_NAME}"  # 修正：移除多余的 BIN 变量
             exit 1
           fi
 
           # 打包
           if [[ "$OS" == "Windows" ]]; then
-            pwsh -Command "Compress-Archive -Path '${BIN_DIR}/${BIN_NAME}' -Destination DestinationPath '${TMP_DIR}/${PACKAGE_NAME}' -Force"
+            pwsh -Command "Compress-Archive -Path '${BIN_DIR}/${BIN_NAME}' -DestinationPath '${TMP_DIR}/${PACKAGE_NAME}' -Force"  # 修正：DestinationPath 拼写
           else
             tar -czf "${TMP_DIR}/${PACKAGE_NAME}" -C "${BIN_DIR}" "${BIN_NAME}"
           fi
@@ -95,7 +103,7 @@ jobs:
           echo "CHECKSUM_PATH=${TMP_DIR}/${PACKAGE_NAME}.sha256" >> $GITHUB_OUTPUT
         shell: bash
 
-      # 6. 上传到 Release
+      # 7. 上传到 Release
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
