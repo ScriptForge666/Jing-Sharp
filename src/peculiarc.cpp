@@ -187,7 +187,7 @@ std::string build_command(const fs::path& tempSource,
 // ---------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    const char* version_str = "peculiarc version 0.9.12";
+    const char* version_str = "peculiarc version 0.9.13";
     const char* help_str =
         "用法: peculiarc [options] <source> [compiler options]\n"
         "  --keep-temp   保留 *_pre.* 临时文件\n"
