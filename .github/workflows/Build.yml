@@ -76,7 +76,7 @@ jobs:
           cmake -S . -B build `
                 -G "${{ matrix.generator }}" `
                 -A x64
-        shell: ${{ matrix.shell }}
+        shell: pwsh
 
       # ----------------------------------------------------
       # 4️⃣ Build
