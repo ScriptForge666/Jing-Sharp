@@ -25,15 +25,24 @@ namespace fs = std::filesystem;
 
 // 全角左小括号
 static const  std::regex re_left_parenthesis(R"(（)");
-
 // 全角右小括号
 static const  std::regex re_right_parenthesis(R"(）)");
-
 //全角左中括号
 static const  std::regex re_left_bracket(R"(【)");
-
 //全角右中括号
 static const  std::regex re_right_bracket(R"(】)");
+//逗号
+static const  std::regex re_comma(R"(，)");
+//句号
+static const  std::regex re_period(R"(。)");
+//顿号
+static const  std::regex re_dunhao(R"(、)");
+//分号
+static const  std::regex re_semicolon(R"(；)");
+//冒号
+static const  std::regex re_colon(R"(：)");
+//引号
+static const  std::regex re_quote(R"(“|”)");
 
 // 井开头的行
 static const std::regex re_hash_line(R"(^([ \t]*)井(?=[^\S\r\n]*\S))");
@@ -63,6 +72,15 @@ std::string process_line(const std::string& line)
     out = std::regex_replace(out, re_right_parenthesis, ")");
 	out = std::regex_replace(out, re_left_bracket, "[");
 	out = std::regex_replace(out, re_right_bracket, "]");
+	//标点符号替换
+	out = std::regex_replace(out, re_comma, ",");
+	out = std::regex_replace(out, re_period, ".");
+	out = std::regex_replace(out, re_dunhao, ",");
+	out = std::regex_replace(out, re_semicolon, ";");
+	out = std::regex_replace(out, re_colon, ":");
+	out = std::regex_replace(out, re_quote, "\"");
+
+    
     //def main → int main
     bool replaced_main = false;
     if (std::regex_search(out, m, re_def_main)) {
