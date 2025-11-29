@@ -1,64 +1,110 @@
-# 在 env 中正确定义临时目录（跨平台兼容）
-env:
-  VERSION: ${{ github.ref_name }}
-  # 修复：使用 GitHub  runner 提供的临时目录环境变量
-  TMP_DIR: ${{ runner.temp }}  # 正确的临时目录变量，而非 github.runner.temp
+name: Build & Release
 
-# ... 其他步骤保持不变 ...
+# 触发条件：推送标签（如 v0.9.4）时执行
+on:
+  push:
+    tags:
+      - 'v*'  # 匹配 v1.0.0、v0.9.4 等标签
 
-- name: Package
-  id: pack
-  run: |
-    VERSION=${{ steps.version.outputs.VERSION }}
-    OS=${{ runner.os }}  # 统一使用 runner.os 变量
-    ARCH=$(uname -m)  # macOS 无需兼容 Windows 的特殊处理
+jobs:
+  build:
+    # 运行平台
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+      fail-fast: false  # 单个平台失败不影响其他平台
 
-    # 修正二进制文件路径（根据实际编译输出，确认在 build/src 目录）
-    if [[ "$OS" == "Windows" ]]; then
-      BIN_DIR="build/src/Release"
-      EXE=peculiarc.exe
-      ARCH=x64
-      OUT_NAME="peculiarc-windows-${ARCH}-${VERSION}.zip"
-    else
-      BIN_DIR="build/src"  # 从日志看，实际二进制在 build/src 目录
-      BIN=peculiarc
-      if [[ "$OS" == "Linux" ]]; then
-        OUT_NAME="peculiarc-linux-${ARCH}-${VERSION}.tar.gz"
-      else  # macOS
-        OUT_NAME="peculiarc-macos-${ARCH}-${VERSION}.tar.gz"
-      fi
-    fi
+    # 环境变量
+    env:
+      VERSION: ${{ github.ref_name }}  # 从标签获取版本（如 v0.9.4）
+      TMP_DIR: ${{ runner runner.temp }}  # 修复：临时目录变量（移除多余符号，保持正确缩进）
 
-    # 调试：确认临时目录有效
-    echo "🔍 临时目录路径: $TMP_DIR"
-    # 验证临时目录可写
-    touch "$TMP_DIR/test-write-permission" && echo "✅ 临时目录可写" || echo "❌ 临时目录不可写"
+    steps:
+      # 1. 检出代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    # 打包逻辑修正（确保输出到 TMP_DIR）
-    if [[ "$OS" == "Windows" ]]; then
-      pwsh -Command "
-        if (Test-Path '$BIN_DIR\$EXE') {
-          Compress-Archive -Path '$BIN_DIR\$EXE' -DestinationPath '$TMP_DIR\$OUT_NAME' -Force
-        } else { exit 1 }
-      "
-    else
-      if [[ -f "$BIN_DIR/$BIN" ]]; then
-        # 明确指定输出到 TMP_DIR，避免路径错误
-        tar -czvf "$TMP_DIR/$OUT_NAME" -C "$BIN_DIR" "$BIN"
-      else
-        echo "❌ 找不到二进制文件: $BIN_DIR/$BIN"
-        exit 1
-      fi
-    fi
+      # 2. 配置 CMake
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v1
+        with:
+          cmake-version: '3.15'  # 匹配项目最低要求
 
-    # 生成校验文件（同样输出到 TMP_DIR）
-    cd "$TMP_DIR"
-    if [[ "$OS" == "Windows" ]]; then
-      pwsh -Command "(Get-FileHash -Path '$OUT_NAME' -Algorithm SHA256).Hash | Out-File -FilePath '${OUT_NAME}.sha256' -Encoding ASCII"
-    else
-      sha256sum "$OUT_NAME" > "${OUT_NAME}.sha256"
-    fi
+      # 3. 编译项目
+      - name: Build with CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17  # 项目使用 C++17
+          cmake --build . --config Release --parallel 2
+        shell: bash
 
-    echo "PACKAGE_PATH=$TMP_DIR/$OUT_NAME" >> $GITHUB_OUTPUT
-    echo "CHECKSUM_PATH=$TMP_DIR/${OUT_NAME}.sha256" >> $GITHUB_OUTPUT
-  shell: bash
+      # 4. 处理版本号（去除前缀 'v'）
+      - name: Normalize version
+        id: version
+        run: |
+          echo "VERSION=${VERSION#v}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      # 5. 打包二进制文件
+      - name: Package binaries
+        id: package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          OS=${{ runner runner.os }}
+          ARCH=$(uname -m 2>/dev/null || echo "x64")
+
+          # 确定二进制文件路径（根据 CMake 配置）
+          if [[ "$OS" == "Windows" ]]; then
+            BIN_DIR="build/src/Release"  # Windows 下 Release 目录
+            BIN_NAME="peculiarc.exe"
+            PACKAGE_NAME="peculiarc-windows-${ARCH}-${VERSION}.zip"
+          else
+            BIN_DIR="build/src"  # Linux/macOS 直接在 build/src 目录
+            BIN_NAME="peculiarc"
+            if [[ "$OS" == "Linux" ]]; then
+              PACKAGE_NAME="peculiarc-linux-${ARCH}-${VERSION}.tar.gz"
+            else
+              PACKAGE_NAME="peculiarc-macos-${ARCH}-${VERSION}.tar.gz"
+            fi
+          fi
+
+          # 验证二进制文件存在
+          if [[ ! -f "${BIN_DIR}/${BIN_NAME}" ]]; then
+            echo "❌ 找不到二进制文件: ${BIN BIN_DIR}/${BIN_NAME}"
+            exit 1
+          fi
+
+          # 打包
+          if [[ "$OS" == "Windows" ]]; then
+            pwsh -Command "Compress-Archive -Path '${BIN_DIR}/${BIN_NAME}' -Destination DestinationPath '${TMP_DIR}/${PACKAGE_NAME}' -Force"
+          else
+            tar -czf "${TMP_DIR}/${PACKAGE_NAME}" -C "${BIN_DIR}" "${BIN_NAME}"
+          fi
+
+          # 生成校验值
+          if [[ "$OS" == "Windows" ]]; then
+            (Get-FileHash -Path "${TMP_DIR}/${PACKAGE_NAME}" -Algorithm SHA256).Hash | Out-File -FilePath "${TMP_DIR}/${PACKAGE_NAME}.sha256" -Encoding ASCII
+          else
+            sha256sum "${TMP_DIR}/${PACKAGE_NAME}" > "${TMP_DIR}/${PACKAGE_NAME}.sha256"
+          fi
+
+          # 输出路径
+          echo "PACKAGE_PATH=${TMP_DIR}/${PACKAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "CHECKSUM_PATH=${TMP_DIR}/${PACKAGE_NAME}.sha256" >> $GITHUB_OUTPUT
+        shell: bash
+
+      # 6. 上传到 Release
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "peculiarc v${{ steps.version.outputs.VERSION }}"
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.PACKAGE_PATH }}
+            ${{ steps.package.outputs.CHECKSUM_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: success()
