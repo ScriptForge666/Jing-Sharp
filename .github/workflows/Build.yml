@@ -58,7 +58,7 @@ jobs:
           else
             brew install cmake
           fi
-        shell: ${{ matrix.shell }}
+        shell: bash
 
       # ----------------------------------------------------
       # 3️⃣ CMake 配置
