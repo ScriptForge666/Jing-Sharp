@@ -1,0 +1,172 @@
+name: Build & Release (CMake)
+
+# ------------------------------------------------------------
+# 触发方式
+# ------------------------------------------------------------
+on:
+  # 当推送一个符合 v*.*.* 形式的 tag 时（如 v1.2.3）触发
+  push:
+    tags:
+      - 'v*.*.*'
+
+# ------------------------------------------------------------
+# 作业（jobs）
+# ------------------------------------------------------------
+jobs:
+  # --------------------------------------------------------
+  # 编译作业（矩阵方式并行跑三个平台）
+  # --------------------------------------------------------
+  build:
+    # 矩阵：3 种系统 + 对应的编译器
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            cc: gcc
+            cxx: g++
+            artifact_ext: tar.gz
+            artifact_name: linux
+          - os: windows-2022
+            cc: cl
+            cxx: cl
+            artifact_ext: zip
+            artifact_name: windows
+          - os: macos-13
+            cc: clang
+            cxx: clang++
+            artifact_ext: tar.gz
+            artifact_name: macos
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # ----------------------------------------------------
+      # 基础：把代码拉到 runner
+      # ----------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          # 如果项目使用 submodules，打开下面一行
+          # submodules: true
+
+      # ----------------------------------------------------
+      # （Linux）安装构建工具
+      # ----------------------------------------------------
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      # ----------------------------------------------------
+      # （macOS）安装构建工具
+      # ----------------------------------------------------
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake
+
+      # ----------------------------------------------------
+      # （Windows）安装 VS Build Tools（已随 windows‑2022 预装）
+      # ----------------------------------------------------
+      - name: Setup MSVC (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          echo "MSVC 已随 runner 安装，无需额外步骤"
+
+      # ----------------------------------------------------
+      # 配置 CMake
+      # ----------------------------------------------------
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+                -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+      # ----------------------------------------------------
+      # 编译
+      # ----------------------------------------------------
+      - name: Build
+        run: |
+          cmake --build build --config Release -j$(nproc)
+
+      # ----------------------------------------------------
+      # 打包（使用 CPack，如果项目没有 CPack 配置则手动打包）
+      # ----------------------------------------------------
+      - name: Package (CPack)
+        id: cpack
+        run: |
+          # 1) 用 CPack（如果 CPack 已经在 CMakeLists.txt 中配置）
+          if [ -f CMakeLists.txt ] && grep -q "CPACK_GENERATOR" CMakeLists.txt; then
+            cmake --build build --target package
+          else
+            echo "CPack not configured – fallback to manual tar/zip"
+          fi
+
+      # ----------------------------------------------------
+      # 7️⃣ 手动打包（如果没有 CPack 产物）
+      # ----------------------------------------------------
+      - name: Manual archive (fallback)
+        if: steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped'
+        run: |
+          # 把编译产物（假设是 build/bin/）压成 archive
+          ARCHIVE_NAME=${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
+          if [ "${{ matrix.artifact_ext }}" = "zip" ]; then
+            powershell -Command "Compress-Archive -Path build\* -DestinationPath $ARCHIVE_NAME"
+          else
+            tar czf $ARCHIVE_NAME -C build .
+          fi
+          echo "ARCHIVE=$ARCHIVE_NAME" >> $GITHUB_ENV
+
+      # ----------------------------------------------------
+      # 8️⃣ 上传产物作为 workflow artifact（后面 release 步骤会下载）
+      # ----------------------------------------------------
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-binary
+          path: |
+            # CPack 生成的默认文件名通常是 *.tar.gz / *.zip / *.deb / *.dmg 等
+            build/*.{zip,tar.gz,deb,dmg}
+            ${{ env.ARCHIVE }}
+
+  # --------------------------------------------------------
+  # 2️⃣ Release 作业（依赖所有 build 作业完成）
+  # --------------------------------------------------------
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      # GITHUB_TOKEN 需要写入 Release 与上传资产的权限
+      contents: write
+    steps:
+      # ----------------------------------------------------
+      # 0️⃣ 把全部平台的 artifact 下载到本地
+      # ----------------------------------------------------
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      # ----------------------------------------------------
+      # 1️⃣ 创建（或更新）GitHub Release
+      # ----------------------------------------------------
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}      # 例如 v1.2.3
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+      # ----------------------------------------------------
+      # 2️⃣ 把每个平台的压缩包上传为 Release Asset
+      # ----------------------------------------------------
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ./artifacts/**/*.{zip,tar.gz,deb,dmg}
+          # 使用默认的 GITHUB_TOKEN 即可（前面已声明权限）
