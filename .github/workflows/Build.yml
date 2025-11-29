@@ -1,29 +1,42 @@
 # .github/workflows/Build.yml
 name: Build & Release (CMake)
 
+# ------------------------------------------------------------
+# 触发方式
+# ------------------------------------------------------------
 on:
   push:
-    branches: [ '**' ]          # 任意分支 push 触发 CI
+    branches: [ '**' ]          # 任意分支 push → CI
     tags:
-      - 'v*.*.*'                # 打 tag 时也会跑（随后会发布 Release）
+      - 'v*.*.*'                # 打 tag → CI + Release
 
+# ------------------------------------------------------------
+# 作业（Job）
+# ------------------------------------------------------------
 jobs:
+  # ---------------------- 编译（矩阵） ----------------------
   build:
     strategy:
       matrix:
         include:
+          # Linux
           - os: ubuntu-22.04
             generator: "Unix Makefiles"
             artifact_ext: tar.gz
             artifact_name: linux
+            shell: bash
+          # macOS
           - os: macos-13
             generator: "Unix Makefiles"
             artifact_ext: tar.gz
             artifact_name: macos
+            shell: bash
+          # Windows
           - os: windows-2022
             generator: "Visual Studio 17 2022"
             artifact_ext: zip
             artifact_name: windows
+            shell: pwsh
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -34,12 +47,12 @@ jobs:
         uses: actions/checkout@v3
 
       # ----------------------------------------------------
-      # 2️⃣ 安装 CMake（Linux/macOS 需要显式安装，Windows 已自带）
+      # 2️⃣ 安装构建工具（Linux/macOS 需要手动安装）
       # ----------------------------------------------------
-      - name: Install Linux / macOS build tools
+      - name: Install deps (Linux / macOS)
         if: runner.os != 'Windows'
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
             sudo apt-get update
             sudo apt-get install -y build-essential cmake
           else
@@ -47,42 +60,33 @@ jobs:
           fi
 
       # ----------------------------------------------------
-      # 3️⃣ CMake 配置（每个平台单独写）             ← 关键改动
+      # 3️⃣ CMake 配置（平台差异已在 matrix.shell 中处理）
       # ----------------------------------------------------
-      # ----------- Linux / macOS (bash) ------------
-      - name: Configure CMake (Unix)
-        if: runner.os != 'Windows'          # 只在非 Windows 上运行
+      - name: Configure CMake
         run: |
-          cmake -S . -B build \
-          -G "${{ matrix.generator }}" \
-          -DCMAKE_BUILD_TYPE=Release
-        shell: bash
-
-        # ----------- Windows (PowerShell) ----------
-      - name: Configure CMake (Windows)
-        if: runner.os == 'Windows'
-        run: |
+          # -------- Linux / macOS ----------
+          if [[ "${{ runner.os }}" != "Windows" ]]; then
+            cmake -S . -B build \
+                  -G "${{ matrix.generator }}" \
+                  -DCMAKE_BUILD_TYPE=Release
+            exit 0
+          fi
+          # -------- Windows (PowerShell) ----------
           cmake -S . -B build `
-          -G "${{ matrix.generator }}" `
-          -A x64
-        shell: pwsh
-
+                -G "${{ matrix.generator }}" `
+                -A x64
+        shell: ${{ matrix.shell }}
 
       # ----------------------------------------------------
-      # 4️⃣ 编译
+      # 4️⃣ 编译（所有平台统一写法）
       # ----------------------------------------------------
       - name: Build
-        # 对 VS 生成器必须指定 --config Release
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cmake --build build --config Release -j$(nproc)
-          else
-            cmake --build build --config Release -j$(nproc)
-          fi
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+          cmake --build build --config Release -j$(nproc)
+        shell: ${{ matrix.shell }}
 
       # ----------------------------------------------------
-      # 5️⃣ 打包（CPack or 手动 fallback）
+      # 5️⃣ 打包（先尝试 CPack，若未配置则手动 archive）
       # ----------------------------------------------------
       - name: Package (CPack)
         id: cpack
@@ -92,7 +96,7 @@ jobs:
           else
             echo "No CPack config – fallback to manual archive"
           fi
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        shell: ${{ matrix.shell }}
 
       - name: Manual archive (fallback)
         if: steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped'
@@ -104,10 +108,10 @@ jobs:
             tar czf $ARCHIVE -C build .
           fi
           echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        shell: ${{ matrix.shell }}
 
       # ----------------------------------------------------
-      # 6️⃣ 上传产物（供后面的 release 作业使用）
+      # 6️⃣ 上传构建产物（给后面的 release job 使用）
       # ----------------------------------------------------
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -117,13 +121,14 @@ jobs:
             build/*.{zip,tar.gz,deb,dmg}
             ${{ env.ARCHIVE }}
 
-  # ============================= Release ==============================
+  # -------------------------- Release -------------------------
   release:
+    # 只在标签 “vX.Y.Z” 时运行
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # 让 GITHUB_TOKEN 能创建 Release 并上传资产
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
