@@ -48,7 +48,7 @@ static const  std::regex re_quote(R"(“|”)");
 static const std::regex re_hash_line(R"(^([ \t]*)井(?=[^\S\r\n]*\S))");
 
 // 井《include》或 #《include》
-static const std::regex re_include_angle( R"((?:井|#)《include》[\s　]*([^\s/\\]+))");
+static const std::regex re_include_angle(R"((?:井|#)《include》[\s　]*([^\s/\\]+))");
 
 // 井"include"或 #"include"
 static const std::regex re_include_quote(R""((?:井|#)"include"[\s　]*([^\s/\\]+))"");
@@ -70,17 +70,17 @@ std::string process_line(const std::string& line)
     //全角括号 → 半角括号
     out = std::regex_replace(out, re_left_parenthesis, "(");
     out = std::regex_replace(out, re_right_parenthesis, ")");
-	out = std::regex_replace(out, re_left_bracket, "[");
-	out = std::regex_replace(out, re_right_bracket, "]");
-	//标点符号替换
-	out = std::regex_replace(out, re_comma, ",");
-	out = std::regex_replace(out, re_period, ".");
-	out = std::regex_replace(out, re_dunhao, ",");
-	out = std::regex_replace(out, re_semicolon, ";");
-	out = std::regex_replace(out, re_colon, ":");
-	out = std::regex_replace(out, re_quote, "\"");
+    out = std::regex_replace(out, re_left_bracket, "[");
+    out = std::regex_replace(out, re_right_bracket, "]");
+    //标点符号替换
+    out = std::regex_replace(out, re_comma, ",");
+    out = std::regex_replace(out, re_period, ".");
+    out = std::regex_replace(out, re_dunhao, ",");
+    out = std::regex_replace(out, re_semicolon, ";");
+    out = std::regex_replace(out, re_colon, ":");
+    out = std::regex_replace(out, re_quote, "\"");
 
-    
+
     //def main → int main
     bool replaced_main = false;
     if (std::regex_search(out, m, re_def_main)) {
@@ -156,6 +156,7 @@ Backend detect_backend()
     if (std::system("command -v gcc > /dev/null 2>&1") == 0) return Backend::GCC;
 #endif
     std::cerr << "[错误] 未检测到可用的 C/C++ 编译器 (cl/gcc/clang)。\n";
+    std::cerr << "[提示] Windows用户请安装Visual Studio或Visual Studio Build Tools\n";
     std::exit(1);
 }
 
@@ -168,13 +169,15 @@ std::string build_command(const fs::path& tempSource,
 {
     std::ostringstream cmd;
     switch (backend) {
-    case Backend::MSVC: cmd << "cl "; break;
-    case Backend::GCC:  cmd << "gcc "; break;
-    case Backend::Clang:cmd << "clang "; break;
-    }
-    if (backend == Backend::MSVC) {
-        if (tempSource.extension() == ".c") cmd << "/TC ";
-        else                               cmd << "/TP ";
+    case Backend::MSVC:
+        cmd << "cl /TP /W3 /EHsc /std:c++17 /nologo ";
+        break;
+    case Backend::GCC:
+        cmd << "gcc -std=c++17 -Wall ";
+        break;
+    case Backend::Clang:
+        cmd << "clang -std=c++17 -Wall ";
+        break;
     }
 
     for (const auto& a : user_args) cmd << a << ' ';
@@ -183,11 +186,11 @@ std::string build_command(const fs::path& tempSource,
 }
 
 // ---------------------------------------------------------------
-//主函数（异常捕获）
+//主函数（异常捕获）- 使用vswhere改进版
 // ---------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    const char* version_str = "peculiarc version 0.9.13";
+    const char* version_str = "peculiarc version 0.9.14";
     const char* help_str =
         "用法: peculiarc [options] <source> [compiler options]\n"
         "  --keep-temp   保留 *_pre.* 临时文件\n"
@@ -231,8 +234,42 @@ int main(int argc, char* argv[])
 
         fs::path tmp = translate_source(srcPath, keep_temp);
         Backend be = detect_backend();
-        std::string cmd = build_command(tmp, user_args, be);
-https://github.com/
+
+        // 构造最终的命令
+        std::string cmd;
+
+#ifdef _WIN32
+        if (be == Backend::MSVC) {
+            // 使用vswhere工具自动查找Visual Studio并设置环境
+            cmd = "cmd.exe /c \"";
+
+            // 使用vswhere查找最新版本的Visual Studio并初始化环境
+            cmd += "echo 正在初始化Visual Studio环境... && ";
+            cmd += "for /f \"usebackq tokens=*\" %i in (`\"%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\" -latest -property installationPath 2^>nul`) do (";
+            cmd += "call \"%i\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x64 > nul 2>&1 && ";
+
+            // 添加实际的编译命令
+            std::ostringstream compile_cmd;
+            compile_cmd << "cl /TP /W3 /EHsc /std:c++17 /nologo ";
+            for (const auto& a : user_args) compile_cmd << a << ' ';
+            compile_cmd << "\"" << tmp.string() << "\"";
+
+            cmd += compile_cmd.str();
+            cmd += ") || (";
+
+            // 如果vswhere失败，尝试直接编译（可能已经在正确环境中）
+            cmd += "echo 尝试直接编译... && ";
+            cmd += build_command(tmp, user_args, be);
+            cmd += ")";
+            cmd += "\"";
+        }
+        else {
+            cmd = build_command(tmp, user_args, be);
+        }
+#else
+        cmd = build_command(tmp, user_args, be);
+#endif
+
         std::cout << "[Info] 正在调用底层编译器:\n  " << cmd << "\n";
         int rc = std::system(cmd.c_str());
 
