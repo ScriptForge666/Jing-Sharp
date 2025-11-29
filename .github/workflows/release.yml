@@ -13,12 +13,13 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
+      fail-fast: false  # 关键：一个平台失败，其他继续执行
 
     # ----- 环境变量 -------------------------------------------------
     env:
       # 把 tag 前缀“v”去掉，得到纯数字版本号，如 0.9.0
       VERSION: ${{ github.ref_name }}
-      # 临时目录，防止与工作区冲突
+      # 临时目录，防止与工作区冲突（修复：补全 github. 前缀）
       TMP_DIR: ${{ github.runner.temp }}
 
     steps:
@@ -38,7 +39,7 @@ jobs:
       #    Ubuntu/macOS 默认已有 gcc/clang，Windows 用 VS Build Tools。
       # -----------------------------------------------------------------
       - name: Install Build Tools (Windows)
-        if: runner.os == 'Windows'
+        if: github.runner.os == 'Windows'  # 修复：补全 github. 前缀
         run: |
           # 已经随 windows-latest 装好 Visual Studio Build Tools
           echo "VS Build Tools 已经预装，无需额外操作"
@@ -49,10 +50,11 @@ jobs:
       # -----------------------------------------------------------------
       - name: Build
         run: |
-          mkdir build
+          mkdir -p build  # 确保 build 目录存在
           cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release
-          cmake --build . --config Release
+          # 兼容 Windows/macOS/Linux 的编译命令（--config Release 对 Makefile 无效但不报错）
+          cmake --build . --config Release --parallel 2  # 并行编译（加快速度）
         shell: bash
 
       # -----------------------------------------------------------------
@@ -66,49 +68,86 @@ jobs:
         shell: bash
 
       # -----------------------------------------------------------------
-      # 6️⃣ 打包（根据 OS 生成 zip / tar.gz，放入 $TMP_DIR）
+      # 6️⃣ 打包（修复路径+权限+调试日志）
       # -----------------------------------------------------------------
       - name: Package
         id: pack
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
-          OS=${{ runner.os }}
-          ARCH=$(uname -m)
+          OS=${{ github.runner.os }}  # 修复：补全 github. 前缀
+          ARCH=$(uname -m 2>/dev/null || echo "x64")  # 兼容 Windows 的 uname 命令
 
-          # Windows 里使用 PowerShell 的 Compress-Archive
+          # 核心：指定二进制文件输出目录（CMake Release 模式默认路径）
           if [[ "$OS" == "Windows" ]]; then
+            BIN_DIR="build/Release"
             EXE=peculiarc.exe
-            ARCH=x64                      # windows-latest 默认 64‑bit
-            OUT_NAME=peculiarc-windows-${ARCH}-${VERSION}.zip
-            pwsh -Command "Compress-Archive -Path build\$EXE -DestinationPath $TMP_DIR\$OUT_NAME"
+            ARCH=x64
+            OUT_NAME="peculiarc-windows-${ARCH}-${VERSION}.zip"
           else
-            # Linux / macOS 使用 tar.gz
+            BIN_DIR="build/Release"
             BIN=peculiarc
-            if [[ "$OS" == "Linux" ]]; then
-              OUT_NAME=peculiarc-linux-${ARCH}-${VERSION}.tar.gz
-            else
-              # macOS（GitHub runners 为 Intel + Apple‑Silicon; 这里统一使用 arm64 作示例）
-              OUT_NAME=peculiarc-macos-arm64-${VERSION}.tar.gz
+            # 验证 Release 目录，不存在则 fallback 到 build 根目录
+            if [[ ! -d "$BIN_DIR" ]]; then
+              echo "⚠️  $BIN_DIR 不存在，尝试 fallback 到 build 目录"
+              BIN_DIR="build"
             fi
-            tar -czvf $TMP_DIR/$OUT_NAME -C build $BIN
+            # 确定系统架构和输出文件名
+            if [[ "$OS" == "Linux" ]]; then
+              OUT_NAME="peculiarc-linux-${ARCH}-${VERSION}.tar.gz"
+            else  # macOS
+              OUT_NAME="peculiarc-macos-${ARCH}-${VERSION}.tar.gz"  # 用实际架构（Intel=x86_64，Apple Silicon=arm64）
+            fi
+          fi
+
+          # 调试：输出关键路径信息
+          echo "🔍 系统：$OS，架构：$ARCH，版本：$VERSION"
+          echo "🔍 二进制目录：$BIN_DIR"
+          echo "🔍 临时目录：$TMP_DIR"
+          ls -l "$BIN_DIR"  # 列出二进制目录内容，方便调试
+
+          # 打包逻辑
+          if [[ "$OS" == "Windows" ]]; then
+            # Windows：用 PowerShell 压缩，兼容路径格式
+            pwsh -Command "
+              if (Test-Path '$BIN_DIR\$EXE') {
+                Compress-Archive -Path '$BIN_DIR\$EXE' -DestinationPath '$TMP_DIR\$OUT_NAME' -Force
+                echo '✅ Windows 打包成功：$TMP_DIR\$OUT_NAME'
+              } else {
+                echo '❌ 找不到二进制文件：$BIN_DIR\$EXE'
+                exit 1
+              }
+            "
+          else
+            # Linux/macOS：用 tar 打包，先验证文件存在
+            if [[ -f "$BIN_DIR/$BIN" ]]; then
+              tar -czvf "$TMP_DIR/$OUT_NAME" -C "$BIN_DIR" "$BIN"
+              echo "✅ Linux/macOS 打包成功：$TMP_DIR/$OUT_NAME"
+            else
+              echo "❌ 找不到二进制文件：$BIN_DIR/$BIN"
+              exit 1
+            fi
           fi
 
           # 生成 SHA256 校验文件
-          cd $TMP_DIR
-          sha256sum $OUT_NAME > ${OUT_NAME}.sha256
+          cd "$TMP_DIR"
+          if [[ "$OS" == "Windows" ]]; then
+            # Windows 用 PowerShell 生成 SHA256
+            pwsh -Command "(Get-FileHash -Path '$OUT_NAME' -Algorithm SHA256).Hash | Out-File -FilePath '${OUT_NAME}.sha256' -Encoding ASCII"
+          else
+            sha256sum "$OUT_NAME" > "${OUT_NAME}.sha256"
+          fi
 
-          # 把生成的文件路径写入 step 输出，后面的上传步骤直接引用
+          # 输出文件路径给后续步骤
           echo "PACKAGE_PATH=$TMP_DIR/$OUT_NAME" >> $GITHUB_OUTPUT
           echo "CHECKSUM_PATH=$TMP_DIR/${OUT_NAME}.sha256" >> $GITHUB_OUTPUT
         shell: bash
 
       # -----------------------------------------------------------------
-      # 7️⃣ 上传至 GitHub Release（使用 softprops/action-gh-release）
+      # 7️⃣ 上传至 GitHub Release
       # -----------------------------------------------------------------
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
-          # 只在 tag 推送时自动创建（或更新） Release
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true
@@ -117,3 +156,5 @@ jobs:
             ${{ steps.pack.outputs.CHECKSUM_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # 只有打包成功才执行上传（失败则跳过）
+        if: success()
