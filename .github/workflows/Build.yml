@@ -7,8 +7,7 @@ name: Build & Release (CMake)
 on:
   push:
     branches: [ '**' ]          # 所有分支的 push 都跑 CI
-  tags:
-    - 'v*.*.*'                  # 打标签时跑 Release（如 v1.2.3）
+  tags: - 'v*.*.*'                  # 打标签时跑 Release（如 v1.2.3）
 
 # ------------------------------------------------------------
 # 作业（jobs）
