@@ -1,118 +1,18 @@
-name: Build & Release
-
-# 触发条件：推送标签（如 v0.9.4）时执行
-on:
-  push:
-    tags:
-      - 'v*'  # 匹配 v1.0.0、v0.9.4 等标签
-
+name: GitHub Actions Demo
+run-name: ${{ github.actor }} is testing out GitHub Actions 🚀
+on: [push]
 jobs:
-  build:
-    # 运行平台
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-      fail-fast: false  # 单个平台失败不影响其他平台
-
-    # 环境变量（注意缩进：属于jobs.build 的子项）
-    env:
-      VERSION: ${{ github.ref_name }}
-      TMP_DIR: ${{ github.runner.temp }}  # 正确的临时目录变量
-
-    # 步骤（所有步骤必须缩进在 jobs.build 下）
+  Explore-GitHub-Actions:
+    runs-on: ubuntu-latest
     steps:
-      # 1. 检出代码
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # 2. 配置 CMake
-      - name: Set up CMake
-        uses: jwlawson/actions-setup-cmake@v1
-        with:
-          cmake-version: '3.15'  # 匹配项目最低要求
-
-      # 3. Windows 额外安装工具（仅 Windows 执行）
-      - name: Install Build Tools (Windows)
-        if: github.runner.os == 'Windows'
+      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
+      - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
+      - run: echo "🔎 The name of your branch is ${{ github.ref }} and your repository is ${{ github.repository }}."
+      - name: Check out repository code
+        uses: actions/checkout@v5
+      - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
+      - run: echo "🖥️ The workflow is now ready to test your code on the runner."
+      - name: List files in the repository
         run: |
-          echo "VS Build Tools 已经预装，无需额外操作"
-        shell: pwsh
-
-      # 4. 编译项目
-      - name: Build with CMake
-        run: |
-          mkdir -p build
-          cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17  # 项目使用 C++17
-          cmake --build . --config Release --parallel 2
-        shell: bash
-
-      # 5. 处理版本号（去除前缀 'v'）
-      - name: Normalize version
-        id: version
-        run: |
-          echo "VERSION=${VERSION#v}" >> $GITHUB_OUTPUT
-        shell: bash
-
-      # 6. 打包二进制文件
-      - name: Package binaries
-        id: package
-        run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          OS=${{ github.runner.os }}  # 修正：正确引用系统变量
-          ARCH=$(uname -m 2>/dev/null || echo "x64")
-
-          # 确定二进制文件路径（根据 CMake 配置）
-          if [[ "$OS" == "Windows" ]]; then
-            BIN_DIR="build/src/Release"  # Windows 下 Release 目录
-            BIN_NAME="peculiarc.exe"
-            PACKAGE_NAME="peculiarc-windows-${ARCH}-${VERSION}.zip"
-          else
-            BIN_DIR="build/src"  # Linux/macOS 直接在 build/src 目录
-            BIN_NAME="peculiarc"
-            if [[ "$OS" == "Linux" ]]; then
-              PACKAGE_NAME="peculiarc-linux-${ARCH}-${VERSION}.tar.gz"
-            else
-              PACKAGE_NAME="peculiarc-macos-${ARCH}-${VERSION}.tar.gz"
-            fi
-          fi
-
-          # 验证二进制文件存在
-          if [[ ! -f "${BIN_DIR}/${BIN_NAME}" ]]; then
-            echo "❌ 找不到二进制文件: ${BIN_DIR}/${BIN_NAME}"  # 修正：移除多余的 BIN 变量
-            exit 1
-          fi
-
-          # 打包
-          if [[ "$OS" == "Windows" ]]; then
-            pwsh -Command "Compress-Archive -Path '${BIN_DIR}/${BIN_NAME}' -DestinationPath '${TMP_DIR}/${PACKAGE_NAME}' -Force"  # 修正：DestinationPath 拼写
-          else
-            tar -czf "${TMP_DIR}/${PACKAGE_NAME}" -C "${BIN_DIR}" "${BIN_NAME}"
-          fi
-
-          # 生成校验值
-          if [[ "$OS" == "Windows" ]]; then
-            (Get-FileHash -Path "${TMP_DIR}/${PACKAGE_NAME}" -Algorithm SHA256).Hash | Out-File -FilePath "${TMP_DIR}/${PACKAGE_NAME}.sha256" -Encoding ASCII
-          else
-            sha256sum "${TMP_DIR}/${PACKAGE_NAME}" > "${TMP_DIR}/${PACKAGE_NAME}.sha256"
-          fi
-
-          # 输出路径
-          echo "PACKAGE_PATH=${TMP_DIR}/${PACKAGE_NAME}" >> $GITHUB_OUTPUT
-          echo "CHECKSUM_PATH=${TMP_DIR}/${PACKAGE_NAME}.sha256" >> $GITHUB_OUTPUT
-        shell: bash
-
-      # 7. 上传到 Release
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: "peculiarc v${{ steps.version.outputs.VERSION }}"
-          generate_release_notes: true
-          files: |
-            ${{ steps.package.outputs.PACKAGE_PATH }}
-            ${{ steps.package.outputs.CHECKSUM_PATH }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: success()
+          ls ${{ github.workspace }}
+      - run: echo "🍏 This job's status is ${{ job.status }}."
