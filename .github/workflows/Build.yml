@@ -91,53 +91,69 @@ jobs:
         shell: pwsh
 
       # ----------------------------------------------------
-      # 5️⃣ Package (CPack)
+      # 5️⃣ 创建 CPack 输出目录（确保目录存在）
+      # ----------------------------------------------------
+      - name: Create CPack output directory
+        run: |
+          mkdir -p build/package  # Linux/macOS
+        shell: bash
+        if: ${{ runner.os != 'Windows' }}
+
+      - name: Create CPack output directory (Windows)
+        run: |
+          New-Item -ItemType Directory -Path build\package -Force | Out-Null
+        shell: pwsh
+        if: ${{ runner.os == 'Windows' }}
+
+      # ----------------------------------------------------
+      # 6️⃣ Package (CPack)
       # ----------------------------------------------------
       - name: Package (CPack)
         id: cpack
         run: |
-          if grep -q "CPACK_GENERATOR" CMakeLists.txt; then
+          if grep -q "include(CPack)" CMakeLists.txt; then
             cmake --build build --target package
+            echo "CPack 产物已生成到 build/package/"
           else
             echo "No CPack config – fallback to manual archive"
           fi
         shell: bash
 
       # ----------------------------------------------------
-      # 6️⃣ 手动压缩 (fallback)
+      # 7️⃣ 手动压缩 (fallback) - 输出到 build/package/
       # ----------------------------------------------------
       - name: Manual archive (Linux / macOS)
         if: ${{ runner.os != 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
         run: |
-          ARCHIVE=${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
+          # 产物输出到 build/package/（与 CPack 统一路径）
+          ARCHIVE=build/package/${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
           tar czf $ARCHIVE -C build .
           echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+          echo "手动归档产物：$ARCHIVE"
         shell: bash
 
       - name: Manual archive (Windows)
         if: ${{ runner.os == 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
         run: |
-          $ARCHIVE = "${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
-          Compress-Archive -Path build\* -DestinationPath $ARCHIVE
+          # 产物输出到 build/package/（与 CPack 统一路径）
+          $ARCHIVE = "build\package\${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
+          Compress-Archive -Path build\* -DestinationPath $ARCHIVE -Force
           echo "ARCHIVE=$ARCHIVE" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "手动归档产物：$ARCHIVE"
         shell: pwsh
 
       # ----------------------------------------------------
-      # 7️⃣ 上传构建产物（供后面的 release job 使用）
+      # 8️⃣ 上传构建产物（统一匹配 build/package/ 目录）
       # ----------------------------------------------------
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-binary
-          # 手动压缩步骤生成的归档文件通过 ${{ env.ARCHIVE }} 暴露，
-          # 必须把它一起上传，否则会出现 “No files were found”。
+          # 匹配 CPack 和手动归档的产物（都在 build/package/）
           path: |
-            ${{ env.ARCHIVE }}
-            build/src/*.{zip,tar.gz,deb,dmg}
+            build/package/*.{zip,tar.gz,deb,dmg}
+          # 没有产物时只警告，不中断工作流（可选）
           if-no-files-found: warn
-          compression-level: 6
-          overwrite: false
-          include-hidden-files: false
 
   # -------------------------- Release -------------------------
   release:
@@ -167,4 +183,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          # 匹配所有下载的产物（zip/tar.gz/deb/dmg）
           files: ./artifacts/**/*.{zip,tar.gz,deb,dmg}
