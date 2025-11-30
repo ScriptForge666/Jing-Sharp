@@ -109,8 +109,7 @@ jobs:
       - name: Manual archive (Linux / macOS)
         if: ${{ runner.os != 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
         run: |
-          # 修改1：手动归档产物输出到 build/ 目录（与 CPack 产物路径统一）
-          ARCHIVE=build/${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
+          ARCHIVE=${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
           tar czf $ARCHIVE -C build .
           echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
         shell: bash
@@ -118,8 +117,7 @@ jobs:
       - name: Manual archive (Windows)
         if: ${{ runner.os == 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
         run: |
-          # 修改1：手动归档产物输出到 build/ 目录（与 CPack 产物路径统一）
-          $ARCHIVE = "build\${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
+          $ARCHIVE = "${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
           Compress-Archive -Path build\* -DestinationPath $ARCHIVE
           echo "ARCHIVE=$ARCHIVE" | Out-File -FilePath $env:GITHUB_ENV -Append
         shell: pwsh
@@ -131,10 +129,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-binary
-          # 修改2：简化路径，同时捕获 CPack 产物（build/根目录）和手动归档产物（build/目录）
+          # 手动压缩步骤生成的归档文件通过 ${{ env.ARCHIVE }} 暴露，
+          # 必须把它一起上传，否则会出现 “No files were found”。
           path: |
-            build/*.{zip,tar.gz,deb,dmg}
             ${{ env.ARCHIVE }}
+            build/src/*.{zip,tar.gz,deb,dmg}
           if-no-files-found: warn
           compression-level: 6
           overwrite: false
