@@ -107,7 +107,7 @@ jobs:
       # 6️⃣ 手动压缩 (fallback)
       # ----------------------------------------------------
       - name: Manual archive (Linux / macOS)
-        if: ${{ runner.os != 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
+        if: ${{ runner.os != 'Windows' && (failure() || cancelled()) }}
         run: |
           ARCHIVE=${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
           tar czf $ARCHIVE -C build .
@@ -115,7 +115,7 @@ jobs:
         shell: bash
 
       - name: Manual archive (Windows)
-        if: ${{ runner.os == 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
+        if: ${{ runner.os == 'Windows' && (failure() || cancelled()) }}
         run: |
           $ARCHIVE = "${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
           Compress-Archive -Path build\* -DestinationPath $ARCHIVE
@@ -129,11 +129,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-binary
-          # 手动压缩步骤生成的归档文件通过 ${{ env.ARCHIVE }} 暴露，
-          # 必须把它一起上传，否则会出现 “No files were found”。
-          path: |
-            ${{ env.ARCHIVE }}
-            build/src/*.{zip,tar.gz,deb,dmg}
+          path: ${{ env.ARCHIVE }}
           if-no-files-found: warn
           compression-level: 6
           overwrite: false

@@ -13,13 +13,13 @@ add_subdirectory(src)
 # --------------------------
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
   include(CPack)
+  set(CPACK_GENERATOR "ZIP;TGZ")
 
   # 固定产物输出目录
   set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/package")
 
   # 适配 Windows Visual Studio 生成器：强制指定打包目标和安装路径
   if (WIN32 AND MSVC)
-    set(CPACK_GENERATOR "ZIP")
     # 明确告诉 CPack 打包 Release 配置的目标（Visual Studio 默认多配置）
     set(CPACK_BUILD_CONFIGURATION "Release")
     # 确保安装路径正确（避免 Windows 下路径问题）
