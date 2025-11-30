@@ -93,29 +93,51 @@ jobs:
       # ----------------------------------------------------
       # 5️⃣ 创建 CPack 输出目录（确保目录存在）
       # ----------------------------------------------------
-      - name: Create CPack output directory
-        run: |
-          mkdir -p build/package  # Linux/macOS
+      - name: Create CPack output directory (Linux/macOS)
+        run: mkdir -p build/package
         shell: bash
         if: ${{ runner.os != 'Windows' }}
 
       - name: Create CPack output directory (Windows)
-        run: |
-          New-Item -ItemType Directory -Path build\package -Force | Out-Null
+        run: New-Item -ItemType Directory -Path build\package -Force | Out-Null
         shell: pwsh
         if: ${{ runner.os == 'Windows' }}
 
       # ----------------------------------------------------
-      # 6️⃣ Package (CPack)
+      # 6️⃣ Package (CPack) - 分平台适配
       # ----------------------------------------------------
-      - name: Package (CPack)
+      - name: Package (CPack) - Linux/macOS
         id: cpack
+        if: ${{ runner.os != 'Windows' }}
         run: |
           if grep -q "include(CPack)" CMakeLists.txt; then
             cmake --build build --target package
-            echo "CPack 产物已生成到 build/package/"
+            echo "✅ CPack 产物生成完成（路径：build/package/）"
           else
-            echo "No CPack config – fallback to manual archive"
+            echo "ℹ️ 未找到 CPack 配置，将使用手动归档"
+          fi
+        shell: bash
+
+      - name: Package (CPack) - Windows
+        id: cpack-windows
+        if: ${{ runner.os == 'Windows' }}
+        run: |
+          if (Select-String -Path CMakeLists.txt -Pattern "include\(CPack\)" -Quiet); then
+            # Windows Visual Studio 生成器：直接调用 cpack 命令
+            cpack --build build --config Release --verbose
+            echo "✅ Windows CPack 产物生成完成（路径：build/package/）"
+          else
+            echo "ℹ️ 未找到 CPack 配置，将使用手动归档"
+          fi
+        shell: pwsh
+
+      # 合并 CPack 步骤结果
+      - name: Set CPack result flag
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            echo "CPACK_OUTCOME=${{ steps.cpack-windows.outcome }}" >> $GITHUB_ENV
+          else
+            echo "CPACK_OUTCOME=${{ steps.cpack.outcome }}" >> $GITHUB_ENV
           fi
         shell: bash
 
@@ -123,23 +145,22 @@ jobs:
       # 7️⃣ 手动压缩 (fallback) - 输出到 build/package/
       # ----------------------------------------------------
       - name: Manual archive (Linux / macOS)
-        if: ${{ runner.os != 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
+        if: ${{ runner.os != 'Windows' && (env.CPACK_OUTCOME == 'failure' || env.CPACK_OUTCOME == 'skipped') }}
         run: |
-          # 产物输出到 build/package/（与 CPack 统一路径）
           ARCHIVE=build/package/${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
           tar czf $ARCHIVE -C build .
           echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
-          echo "手动归档产物：$ARCHIVE"
+          echo "✅ 手动归档产物：$ARCHIVE"
         shell: bash
 
       - name: Manual archive (Windows)
-        if: ${{ runner.os == 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
+        if: ${{ runner.os == 'Windows' && (env.CPACK_OUTCOME == 'failure' || env.CPACK_OUTCOME == 'skipped') }}
         run: |
-          # 产物输出到 build/package/（与 CPack 统一路径）
           $ARCHIVE = "build\package\${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
-          Compress-Archive -Path build\* -DestinationPath $ARCHIVE -Force
+          # 只打包 Release 目录的产物（Visual Studio 生成的可执行文件在 build/Release 下）
+          Compress-Archive -Path build\Release\* -DestinationPath $ARCHIVE -Force
           echo "ARCHIVE=$ARCHIVE" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "手动归档产物：$ARCHIVE"
+          echo "✅ 手动归档产物：$ARCHIVE"
         shell: pwsh
 
       # ----------------------------------------------------
@@ -149,20 +170,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-binary
-          # 匹配 CPack 和手动归档的产物（都在 build/package/）
-          path: |
-            build/package/*.{zip,tar.gz,deb,dmg}
-          # 没有产物时只警告，不中断工作流（可选）
+          path: build/package/*.{zip,tar.gz,deb,dmg}
           if-no-files-found: warn
 
   # -------------------------- Release -------------------------
   release:
-    # 只在符合 vX.Y.Z 格式的 tag 时执行
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # 允许运行时使用 GITHUB_TOKEN 创建 Release 并上传资产
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -183,5 +200,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          # 匹配所有下载的产物（zip/tar.gz/deb/dmg）
           files: ./artifacts/**/*.{zip,tar.gz,deb,dmg}
