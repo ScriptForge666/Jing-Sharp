@@ -104,7 +104,7 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
 
       # ----------------------------------------------------
-      # 6️⃣ Package (CPack) - 分平台适配（修正 PowerShell 语法）
+      # 6️⃣ Package (CPack) - 分平台适配（最终修正）
       # ----------------------------------------------------
       - name: Package (CPack) - Linux/macOS
         id: cpack
@@ -122,10 +122,13 @@ jobs:
         id: cpack-windows
         if: ${{ runner.os == 'Windows' }}
         run: |
-          # 关键修正：PowerShell if 条件后必须加 {} 语句块
           if (Select-String -Path CMakeLists.txt -Pattern "include\(CPack\)" -Quiet) {
-            # Windows Visual Studio 生成器：直接调用 cpack 命令
-            cpack --build build --config Release --verbose
+            # 最终修正：CPack 多配置生成器正确参数
+            cpack -G ZIP `
+                  -B build/package `  # 产物输出目录
+                  -C Release `         # 构建配置（Release）
+                  -S build `           # CMake 构建目录
+                  --verbose
             echo "✅ Windows CPack 产物生成完成（路径：build/package/）"
           } else {
             echo "ℹ️ 未找到 CPack 配置，将使用手动归档"
