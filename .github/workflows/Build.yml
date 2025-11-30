@@ -104,7 +104,7 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
 
       # ----------------------------------------------------
-      # 6️⃣ Package (CPack) - 分平台适配
+      # 6️⃣ Package (CPack) - 分平台适配（修正 PowerShell 语法）
       # ----------------------------------------------------
       - name: Package (CPack) - Linux/macOS
         id: cpack
@@ -122,13 +122,14 @@ jobs:
         id: cpack-windows
         if: ${{ runner.os == 'Windows' }}
         run: |
-          if (Select-String -Path CMakeLists.txt -Pattern "include\(CPack\)" -Quiet); then
+          # 关键修正：PowerShell if 条件后必须加 {} 语句块
+          if (Select-String -Path CMakeLists.txt -Pattern "include\(CPack\)" -Quiet) {
             # Windows Visual Studio 生成器：直接调用 cpack 命令
             cpack --build build --config Release --verbose
             echo "✅ Windows CPack 产物生成完成（路径：build/package/）"
-          else
+          } else {
             echo "ℹ️ 未找到 CPack 配置，将使用手动归档"
-          fi
+          }
         shell: pwsh
 
       # 合并 CPack 步骤结果
@@ -157,7 +158,7 @@ jobs:
         if: ${{ runner.os == 'Windows' && (env.CPACK_OUTCOME == 'failure' || env.CPACK_OUTCOME == 'skipped') }}
         run: |
           $ARCHIVE = "build\package\${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
-          # 只打包 Release 目录的产物（Visual Studio 生成的可执行文件在 build/Release 下）
+          # 只打包 Release 目录的产物（Visual Studio 生成的可执行文件在该目录）
           Compress-Archive -Path build\Release\* -DestinationPath $ARCHIVE -Force
           echo "ARCHIVE=$ARCHIVE" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "✅ 手动归档产物：$ARCHIVE"
