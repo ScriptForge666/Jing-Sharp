@@ -133,7 +133,7 @@ jobs:
           # 必须把它一起上传，否则会出现 “No files were found”。
           path: |
             ${{ env.ARCHIVE }}
-            build/*.{zip,tar.gz,deb,dmg}
+            build/src/*.{zip,tar.gz,deb,dmg}
           if-no-files-found: warn
           compression-level: 6
           overwrite: false
