@@ -1,4 +1,3 @@
-# .github/workflows/Build.yml
 name: Build & Release (CMake)
 
 # ------------------------------------------------------------
@@ -130,9 +129,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-binary
+          # 手动压缩步骤生成的归档文件通过 ${{ env.ARCHIVE }} 暴露，
+          # 必须把它一起上传，否则会出现 “No files were found”。
           path: |
-            build/*.{zip,tar.gz,deb,dmg}
             ${{ env.ARCHIVE }}
+            build/*.{zip,tar.gz,deb,dmg}
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
+
   # -------------------------- Release -------------------------
   release:
     # 只在符合 vX.Y.Z 格式的 tag 时执行
