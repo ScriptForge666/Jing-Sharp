@@ -1,20 +1,20 @@
 # .github/workflows/Build.yml
 name: Build & Release (CMake)
 
-# ------------------------------------------------------------  
-# 触发条件  
-# ------------------------------------------------------------  
+# ------------------------------------------------------------
+# 触发条件
+# ------------------------------------------------------------
 on:
   push:
-    branches: ['**'] # 任意分支 push 时跑 CI
+    branches: [ '**' ]          # 任意分支 push 时跑 CI
     tags:
-      - 'v*.*.*' # 打标签时跑 CI 并产生 Release
+      - 'v*.*.*'                # 打标签时跑 CI 并产生 Release
 
-# ------------------------------------------------------------  
-# 作业 (Job)  
-# ------------------------------------------------------------  
+# ------------------------------------------------------------
+# 作业 (Job)
+# ------------------------------------------------------------
 jobs:
-  # ---------------------- 编译 (矩阵) ----------------------  
+  # ---------------------- 编译 (矩阵) ----------------------
   build:
     strategy:
       matrix:
@@ -25,102 +25,122 @@ jobs:
             artifact_ext: tar.gz
             artifact_name: linux
           # macOS
-          - os: macos-latest
+          - os: macos-13
             generator: "Unix Makefiles"
             artifact_ext: tar.gz
-            artifact_name: darwin
+            artifact_name: macos
           # Windows
-          - os: windows-latest
+          - os: windows-2022
             generator: "Visual Studio 17 2022"
             artifact_ext: zip
             artifact_name: windows
     runs-on: ${{ matrix.os }}
 
-    # ----------------------------------------------------  
-    # 1️⃣ 安装依赖 (Linux / macOS)  
-    # ----------------------------------------------------  
-    - name: Install dependencies (Linux / macOS)
-      if: matrix.os == 'ubuntu-22.04' || matrix.os == 'macos-latest'
-      run: |
-        sudo apt-get update && sudo apt-get install -y build-essential
-        brew install --cask xquartz  # macOS 需要 XQuartz
+    steps:
+      # ----------------------------------------------------
+      # 1️⃣ Checkout
+      # ----------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    # ----------------------------------------------------  
-    # 2️⃣ 安装依赖 (Windows)  
-    # ----------------------------------------------------  
-    - name: Install dependencies (Windows)
-      if: matrix.os == 'windows-latest'
-      run: |
-        # Windows 依赖通常由系统自动安装，此处可添加额外配置
-        echo "Windows dependencies are already installed."
+      # ----------------------------------------------------
+      # 2️⃣ 安装构建工具（Linux / macOS 需要自行安装）
+      # ----------------------------------------------------
+      - name: Install dependencies (Linux / macOS)
+        if: ${{ runner.os != 'Windows' }}
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential cmake
+          else
+            brew install cmake
+          fi
+        shell: bash
 
-    # ----------------------------------------------------  
-    # 3️⃣ 配置 CMake  
-    # ----------------------------------------------------  
-    - name: Configure CMake
-      run: |
-        cmake -S . -B build -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release
+      # ----------------------------------------------------
+      # 3️⃣ CMake 配置
+      # ----------------------------------------------------
+      - name: Configure CMake (Linux / macOS)
+        if: ${{ runner.os != 'Windows' }}
+        run: |
+          cmake -S . -B build \
+                -G "${{ matrix.generator }}" \
+                -DCMAKE_BUILD_TYPE=Release
+        shell: bash
 
-    # ----------------------------------------------------  
-    # 4️⃣ 构建项目  
-    # ----------------------------------------------------  
-    - name: Build project
-      run: |
-        cmake --build build --config Release --target all
-      shell: bash
+      - name: Configure CMake (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        run: |
+          cmake -S . -B build `
+                -G "${{ matrix.generator }}" `
+                -A x64
+        shell: pwsh
 
-    # ----------------------------------------------------  
-    # 5️⃣ 打包 (CPack)  
-    # ----------------------------------------------------  
-    - name: Package (CPack)
-      id: cpack
-      run: |
-        if grep -q "CPACK_GENERATOR" CMakeLists.txt; then
-          cmake --build build --target package
-        else
-          echo "No CPack config – fallback to manual archive"
-        fi
-      shell: bash
+      # ----------------------------------------------------
+      # 4️⃣ Build
+      # ----------------------------------------------------
+      - name: Build (Linux / macOS)
+        if: ${{ runner.os != 'Windows' }}
+        run: |
+          cmake --build build --config Release -j$(nproc)
+        shell: bash
 
-    # ----------------------------------------------------  
-    # 6️⃣ 手动压缩 (fallback)  
-    # ----------------------------------------------------  
-    - name: Manual archive (Linux / macOS)
-      if: matrix.os == 'ubuntu-22.04' || matrix.os == 'macos-latest' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped')
-      run: |
-        ARCHIVE=${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
-        tar czf $ARCHIVE -C build .
-        echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
-      shell: bash
+      - name: Build (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        run: |
+          cmake --build build --config Release
+        shell: pwsh
 
-    - name: Manual archive (Windows)
-      if: matrix.os == 'windows-latest' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped')
-      run: |
-        $ARCHIVE = "${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
-        Compress-Archive -Path build\* -DestinationPath $ARCHIVE
-        echo "ARCHIVE=$ARCHIVE" | Out-File -FilePath $env:GITHUB_ENV -Append
-      shell: pwsh
+      # ----------------------------------------------------
+      # 5️⃣ Package (CPack)
+      # ----------------------------------------------------
+      - name: Package (CPack)
+        id: cpack
+        run: |
+          if grep -q "CPACK_GENERATOR" CMakeLists.txt; then
+            cmake --build build --target package
+          else
+            echo "No CPack config – fallback to manual archive"
+          fi
+        shell: bash
 
-    # ----------------------------------------------------  
-    # 7️⃣ 上传构建产物（供后面的 release job 使用）  
-    # ----------------------------------------------------  
-    - name: Upload build artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.artifact_name }}-binary
-        path: |
-          build/*.{zip,tar.gz,deb,dmg}
-          ${{ env.ARCHIVE }}
+      # ----------------------------------------------------
+      # 6️⃣ 手动压缩 (fallback)
+      # ----------------------------------------------------
+      - name: Manual archive (Linux / macOS)
+        if: ${{ runner.os != 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
+        run: |
+          ARCHIVE=${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}
+          tar czf $ARCHIVE -C build .
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+        shell: bash
 
-  # -------------------------- Release -----------------------  
+      - name: Manual archive (Windows)
+        if: ${{ runner.os == 'Windows' && (steps.cpack.outcome == 'failure' || steps.cpack.conclusion == 'skipped') }}
+        run: |
+          $ARCHIVE = "${{ matrix.artifact_name }}-${{ github.ref_name }}.${{ matrix.artifact_ext }}"
+          Compress-Archive -Path build\* -DestinationPath $ARCHIVE
+          echo "ARCHIVE=$ARCHIVE" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+
+      # ----------------------------------------------------
+      # 7️⃣ 上传构建产物（供后面的 release job 使用）
+      # ----------------------------------------------------
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-binary
+          path: |
+            build/*.{zip,tar.gz,deb,dmg}
+            ${{ env.ARCHIVE }}
+  # -------------------------- Release -------------------------
   release:
-    # 只在符合 vX.Y.Z 格式的 tag 时执行  
+    # 只在符合 vX.Y.Z 格式的 tag 时执行
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 允许运行时使用 GITHUB_TOKEN 创建 Release 并上传资产
-
+      contents: write   # 允许运行时使用 GITHUB_TOKEN 创建 Release 并上传资产
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -141,5 +161,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: |
-            ./artifacts/**/*.{zip,tar.gz,deb,dmg}
+          files: ./artifacts/**/*.{zip,tar.gz,deb,dmg}
