@@ -2,7 +2,6 @@
 #include <chrono>
 #include <string>
 #include <sstream>
-#include <format>
 
 std::string getVersion() {
     return std::string(ProjectName) + " version " + std::string(ProjectVersion);
@@ -18,7 +17,16 @@ int getYear() {
 
 std::string getCopyright() {
     std::ostringstream oss;
-    oss << "Copyright " << getYear() << " " << ProjectContributor
+    oss << "Copyright " << getYearInterval() << " " << ProjectContributor
         << "\nLicensed under the " << ProjectLicense;
     return oss.str();
+}
+std::string getYearInterval() {
+    int currentYear = getYear();
+    int startYear = std::stoi(std::string(ProjectStartYear));
+    if (currentYear == startYear) {
+        return std::string(ProjectStartYear);
+    } else {
+        return std::string(ProjectStartYear) + "~" + std::to_string(currentYear);
+    }
 }
