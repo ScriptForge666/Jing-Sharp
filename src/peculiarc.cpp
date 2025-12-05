@@ -16,6 +16,7 @@
 #include <regex>
 #include <filesystem>
 #include <cstdlib>
+#include "version.h"
 
 namespace fs = std::filesystem;
 
@@ -190,13 +191,14 @@ std::string build_command(const fs::path& tempSource,
 // ---------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    const char* version_str = "peculiarc version 0.9.14";
-    const char* help_str =
+    std::string version_str = getVersion();
+	std::string copyright_str = getCopyright();
+    std::string_view help_str =
         "用法: peculiarc [options] <source> [compiler options]\n"
         "  --keep-temp   保留 *_pre.* 临时文件\n"
         "  -v, --version 显示版本信息并退出\n"
         "  -h, --help    显示帮助信息并退出\n";
-
+	std::cout << copyright_str << "\n";
     if (argc < 2) {
         std::cerr << help_str;
         return 1;
