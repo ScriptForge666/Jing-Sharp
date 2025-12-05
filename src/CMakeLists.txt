@@ -1,1 +1,1 @@
-﻿add_executable(peculiarc peculiarc.cpp "version.h")
+﻿add_executable(peculiarc peculiarc.cpp "version.h" "version.cpp")
